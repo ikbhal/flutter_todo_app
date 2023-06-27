@@ -1,43 +1,105 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:path/path.dart';
+import 'dart:convert';
+import 'todo.dart';
+
 
 void main() {
   runApp(TodoApp());
 }
 
-class Todo {
-  String title;
-  bool isCompleted;
-
-  Todo({
-    required this.title,
-    this.isCompleted = false,
-  });
-}
 
 class TodoModel extends ChangeNotifier {
+  late Database _database;
   List<Todo> todos = [];
 
-  void addTodo(String title) {
-    todos.add(Todo(title: title));
+  Future<void> initializeDatabase() async {
+    final databasesPath = await getDatabasesPath();
+    final path = join(databasesPath, 'todo.db');
+
+    _database = await openDatabase(
+      path,
+      version: 1,
+      onCreate: (db, version) async {
+        await db.execute('''
+          CREATE TABLE todos (
+            id INTEGER PRIMARY KEY,
+            title TEXT,
+            isCompleted INTEGER
+          )
+        ''');
+      },
+    );
+
+    todos = await _fetchTodos();
     notifyListeners();
   }
 
-  void deleteTodo(int index) {
-    todos.removeAt(index);
+  Future<List<Todo>> _fetchTodos() async {
+    final List<Map<String, dynamic>> maps = await _database.query('todos');
+
+    return List.generate(maps.length, (i) {
+      return Todo.fromMap(maps[i]);
+    });
+  }
+
+  Future<void> addTodo(String title) async {
+    final newTodo = Todo(
+      id: DateTime.now().millisecondsSinceEpoch,
+      title: title,
+    );
+
+    await _database.insert(
+      'todos',
+      newTodo.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+
+    todos = await _fetchTodos();
     notifyListeners();
   }
 
-  void toggleCompletion(int index) {
-    todos[index].isCompleted = !todos[index].isCompleted;
+  Future<void> deleteTodo(int id) async {
+    await _database.delete(
+      'todos',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+
+    todos = await _fetchTodos();
     notifyListeners();
   }
 
-  void editTodoTitle(int index, String newTitle) {
-    todos[index].title = newTitle;
+  Future<void> toggleCompletion(int id, bool isCompleted) async {
+    await _database.update(
+      'todos',
+      {'isCompleted': isCompleted ? 1 : 0},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+
+    todos = await _fetchTodos();
     notifyListeners();
   }
+
+  // todo await todoModel.editTodoTitle(todo.id, newTodoTitle);
+  Future<void> editTodoTitle(int id, String newTitle) async {
+    await _database.update(
+      'todos',
+      {'title': newTitle},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+
+    todos = await _fetchTodos();
+    notifyListeners();
+  }
+
+
 }
+
 
 class TodoApp extends StatelessWidget {
   @override
@@ -59,6 +121,7 @@ class TodoListScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final todoModel = Provider.of<TodoModel>(context);
+    todoModel.initializeDatabase();
     final todos = todoModel.todos;
 
     return Scaffold(
@@ -76,20 +139,21 @@ class TodoListScreen extends StatelessWidget {
               children: [
                 Checkbox(
                   value: todo.isCompleted,
-                  onChanged: (_) {
-                    todoModel.toggleCompletion(index);
+                  onChanged: (value) {
+                    // todoModel.toggleCompletion(index);
+                    todoModel.toggleCompletion(todo.id, value ?? false);
                   },
                 ),
                 IconButton(
                   icon: Icon(Icons.delete),
                   onPressed: () {
-                    todoModel.deleteTodo(index);
+                    todoModel.deleteTodo(todo.id);
                   },
                 ),
               ],
             ),
             onTap: () {
-              _editTodoTitle(context, todoModel, index);
+              _editTodoTitle(context, todoModel, todo);
             },
           );
         },
@@ -136,8 +200,9 @@ class TodoListScreen extends StatelessWidget {
     );
   }
 
-  void _editTodoTitle(BuildContext context, TodoModel todoModel, int index) {
-    String newTodoTitle = todoModel.todos[index].title;
+  void _editTodoTitle(BuildContext context, TodoModel todoModel, Todo todo) {
+    // String newTodoTitle = todoModel.todos[index].title;
+    String newTodoTitle = todo.title;
 
     showDialog(
       context: context,
@@ -159,8 +224,9 @@ class TodoListScreen extends StatelessWidget {
             ),
             TextButton(
               child: const Text('Save'),
-              onPressed: () {
-                todoModel.editTodoTitle(index, newTodoTitle);
+              onPressed:  () async {
+                // todoModel.editTodoTitle(todo.id, newTodoTitle);
+                await todoModel.editTodoTitle(todo.id, newTodoTitle);
                 Navigator.of(context).pop();
               },
             ),
